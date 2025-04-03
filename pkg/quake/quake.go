@@ -5,8 +5,8 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/yaxigin/mto/pkg/config"
@@ -37,9 +37,9 @@ type QuakeRequest struct {
 }
 
 type QuakeResponse struct {
-	Code    interface{} `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data"`
+	Code    any    `json:"code"`
+	Message string `json:"message"`
+	Data    any    `json:"data"`
 	Meta    struct {
 		Pagination struct {
 			Count     int `json:"count"`
@@ -75,7 +75,7 @@ func calculateTimeRange(months int) (string, string) {
 
 func QUCMD(query string, months int, h bool, onlyIP bool) error {
 	conf := Config{}
-	content, err := ioutil.ReadFile(config.GetConfigPath())
+	content, err := os.ReadFile(config.GetConfigPath())
 	if err != nil {
 		return fmt.Errorf("配置文件读取错误: %v", err)
 	}
@@ -84,6 +84,23 @@ func QUCMD(query string, months int, h bool, onlyIP bool) error {
 	}
 
 	startTime, endTime := calculateTimeRange(months)
+
+	// 处理查询语句
+	// 保存原始查询语句以便输出
+	originalQuery := query
+
+	// 检查查询语句是否包含逻辑运算符
+	// Quake 使用 AND 和 OR 作为逻辑运算符，而不是 && 和 ||
+	if strings.Contains(query, " AND ") || strings.Contains(query, " OR ") {
+		// 处理复杂查询（包含逻辑运算符）
+		query = processComplexQuery(query)
+	} else if strings.Contains(query, ":") {
+		// 处理简单查询（单个键值对）
+		query = processSimpleQuery(query)
+	}
+
+	fmt.Printf("原始查询语句: %s\n", originalQuery)
+	fmt.Printf("处理后的查询语句: %s\n", query)
 
 	// 构建请求体
 	reqBody := QuakeRequest{
@@ -211,23 +228,23 @@ func processResults(response QuakeResponse) [][]string {
 	var results [][]string
 
 	// 检查 Data 的类型
-	data, ok := response.Data.([]interface{})
+	data, ok := response.Data.([]any)
 	if !ok {
 		// 如果 Data 不是数组类型，返回空结果
 		return results
 	}
 
 	for _, item := range data {
-		itemMap, ok := item.(map[string]interface{})
+		itemMap, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
 
 		// 处理组件信息
 		var components string
-		if comps, ok := itemMap["components"].([]interface{}); ok {
+		if comps, ok := itemMap["components"].([]any); ok {
 			for _, c := range comps {
-				comp := c.(map[string]interface{})
+				comp := c.(map[string]any)
 				if version, ok := comp["version"].(string); ok && version != "" {
 					components += fmt.Sprintf("%s:%s, ", comp["product_name_cn"], version)
 				} else {
@@ -244,16 +261,16 @@ func processResults(response QuakeResponse) [][]string {
 
 		// 获取服务信息
 		var serverName, title, loadURL, licence, unit, isp string
-		if service, ok := itemMap["service"].(map[string]interface{}); ok {
-			if http, ok := service["http"].(map[string]interface{}); ok {
+		if service, ok := itemMap["service"].(map[string]any); ok {
+			if http, ok := service["http"].(map[string]any); ok {
 				serverName = getStringValue(http, "server")
 				title = getStringValue(http, "title")
-				if urls, ok := http["http_load_url"].([]interface{}); ok && len(urls) > 0 {
+				if urls, ok := http["http_load_url"].([]any); ok && len(urls) > 0 {
 					loadURL = fmt.Sprintf("%v", urls[0])
 				}
-				if icp, ok := http["icp"].(map[string]interface{}); ok {
+				if icp, ok := http["icp"].(map[string]any); ok {
 					licence = getStringValue(icp, "licence")
-					if mainLicence, ok := icp["main_licence"].(map[string]interface{}); ok {
+					if mainLicence, ok := icp["main_licence"].(map[string]any); ok {
 						unit = getStringValue(mainLicence, "unit")
 					}
 				}
@@ -261,7 +278,7 @@ func processResults(response QuakeResponse) [][]string {
 		}
 
 		// 获取位置信息
-		if location, ok := itemMap["location"].(map[string]interface{}); ok {
+		if location, ok := itemMap["location"].(map[string]any); ok {
 			isp = getStringValue(location, "isp")
 		}
 
@@ -284,27 +301,11 @@ func processResults(response QuakeResponse) [][]string {
 }
 
 // 辅助函数：安全地获取字符串值
-func getStringValue(m map[string]interface{}, key string) string {
+func getStringValue(m map[string]any, key string) string {
 	if val, ok := m[key].(string); ok {
 		return val
 	}
 	return ""
-}
-
-// 去重函数
-func deduplicateResults(results [][]string) [][]string {
-	seen := make(map[string]bool)
-	var unique [][]string
-
-	for _, result := range results {
-		// 使用 IP:Port 作为唯一标识
-		key := fmt.Sprintf("%s:%s", result[0], result[2]) // IP + Port
-		if !seen[key] {
-			seen[key] = true
-			unique = append(unique, result)
-		}
-	}
-	return unique
 }
 
 // URL去重函数
@@ -381,7 +382,7 @@ func data(results [][]string) {
 // 批量查询
 func QUF(query string, outputFile string, months int) error {
 	conf := Config{}
-	content, err := ioutil.ReadFile(config.GetConfigPath())
+	content, err := os.ReadFile(config.GetConfigPath())
 	if err != nil {
 		return fmt.Errorf("配置文件读取错误: %v", err)
 	}
@@ -406,7 +407,7 @@ func QUF(query string, outputFile string, months int) error {
 	}
 
 	// 检查是否有数据
-	dataArray, ok := response.Data.([]interface{})
+	dataArray, ok := response.Data.([]any)
 	if !ok || len(dataArray) == 0 {
 		fmt.Printf("未找到结果: %s\n", query)
 		return nil
@@ -472,42 +473,25 @@ func QUF(query string, outputFile string, months int) error {
 	return nil
 }
 
-// 修改 appendToCSV 函数，添加是否显示提示的参数
-func appendToCSV(results [][]string, outputFile string, showPrompt bool) error {
+// 修改 appendToCSV 函数
+func appendToCSV(results [][]string, outputFile string, _ bool) error {
 	if outputFile == "" {
 		outputFile = "quake.csv"
 	}
 
-	// 检查文件是否存在
-	fileExists := false
-	if _, err := os.Stat(outputFile); err == nil {
-		fileExists = true
-	}
-
-	var f *os.File
-	var err error
-	if !fileExists {
-		// 文件不存在，创建新文件
-		f, err = os.Create(outputFile)
-		if err != nil {
-			return fmt.Errorf("创建文件失败: %v", err)
-		}
-		// 写入 UTF-8 BOM
-		f.WriteString("\xEF\xBB\xBF")
-	} else {
-		// 文件存在，以追加模式打开
-		f, err = os.OpenFile(outputFile, os.O_APPEND|os.O_WRONLY, 0666)
-		if err != nil {
-			return fmt.Errorf("打开文件失败: %v", err)
-		}
+	// 以追加模式打开文件
+	f, err := os.OpenFile(outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		return fmt.Errorf("打开文件失败: %v", err)
 	}
 	defer f.Close()
 
 	writer := csv.NewWriter(f)
 	defer writer.Flush()
 
-	// 如果是新文件，写入表头
-	if !fileExists {
+	// 如果文件是新创建的，写入表头和BOM
+	if fi, err := f.Stat(); err == nil && fi.Size() == 0 {
+		f.WriteString("\xEF\xBB\xBF") // UTF-8 BOM
 		writer.Write([]string{"IP", "Domain", "Port", "Protocol", "Host", "URL", "Title", "Server", "ICP", "Unit", "ISP"})
 	}
 

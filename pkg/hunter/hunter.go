@@ -2,15 +2,13 @@ package hunter
 
 import (
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"strings"
 	"time"
-
-	"encoding/csv"
 
 	"github.com/yaxigin/mto/pkg/config"
 
@@ -101,7 +99,7 @@ func calculateTimeRange(months int) (string, string) {
 // HUCMD 处理单个查询
 func HUCMD(search string, months int, h bool, onlyIP bool) error {
 	conf := Config{}
-	content, err := ioutil.ReadFile(config.GetConfigPath())
+	content, err := os.ReadFile(config.GetConfigPath())
 	if err != nil {
 		return fmt.Errorf("配置文件读取错误: %v", err)
 	}
@@ -109,13 +107,23 @@ func HUCMD(search string, months int, h bool, onlyIP bool) error {
 		return fmt.Errorf("解析config.yaml出错: %v", err)
 	}
 
-	// Base64编码
-	//searchBase64 := base64.StdEncoding.EncodeToString([]byte(search))
-	// 检查 s 是否包含 &
-	if strings.Contains(search, "&") {
-		search = "'" + search + "'"
+	// 处理查询语句
+	// 保存原始查询语句以便输出
+	originalQuery := search
+
+	// 检查查询语句是否包含逻辑运算符
+	if strings.Contains(search, "&&") || strings.Contains(search, "||") {
+		// 处理复杂查询（包含逻辑运算符）
+		search = processComplexQuery(search)
+	} else if strings.Contains(search, "=") {
+		// 处理简单查询（单个键值对）
+		search = processSimpleQuery(search)
 	}
-	fmt.Printf("查询语句: %s\n", search)
+
+	gologger.Info().Msgf("原始查询语句: %s", originalQuery)
+	gologger.Info().Msgf("处理后的查询语句: %s", search)
+
+	// Base64编码
 	searchBase64 := base64.URLEncoding.EncodeToString([]byte(search))
 	fmt.Println("base64编码后的查询语句:", searchBase64)
 
@@ -192,7 +200,7 @@ func HUCMD(search string, months int, h bool, onlyIP bool) error {
 // HUPILIANG 处理批量查询
 func HUPILIANG(search string, months int, outputFile string) error {
 	conf := Config{}
-	content, err := ioutil.ReadFile(config.GetConfigPath())
+	content, err := os.ReadFile(config.GetConfigPath())
 	if err != nil {
 		return fmt.Errorf("配置文件读取错误: %v", err)
 	}
@@ -261,7 +269,7 @@ func HUPILIANG(search string, months int, outputFile string) error {
 			var pageResults [][]string
 			success := false
 
-			for retry := 0; retry < 3; retry++ {
+			for retry := range 3 {
 				err = huntermakeRequest(pageURL, &pageResponse)
 				if err == nil {
 					// 处理结果
@@ -327,7 +335,7 @@ func huntermakeRequest(url string, response *HunterResponse) error {
 }
 
 // processResults 处理API返回的结果
-func processResults(response HunterResponse, h bool) [][]string {
+func processResults(response HunterResponse, _ bool) [][]string {
 	var results [][]string
 	for _, item := range response.Data.Arr {
 		// CSV文件格式 - 只包含指定字段

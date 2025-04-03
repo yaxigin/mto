@@ -5,7 +5,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 
@@ -13,6 +12,7 @@ import (
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/parnurzeal/gorequest"
+	"github.com/projectdiscovery/gologger"
 	"gopkg.in/yaml.v2"
 )
 
@@ -20,9 +20,16 @@ type Fofa struct {
 	Results [][]string `json:"results"`
 }
 
+// API相关常量
+const (
+	DefaultPageSize = "1000"
+	DefaultPage     = "1"
+	FofaAPIURL      = "https://fofa.info/api/v1/search/all"
+	DefaultFields   = "ip,domain,port,protocol,link,title,server"
+)
+
 type Config struct {
 	Fofa struct {
-		//Email string `yaml:"email"`
 		Key string `yaml:"key"`
 	}
 	Chinaz struct {
@@ -30,118 +37,55 @@ type Config struct {
 	}
 }
 
+// FOCMD 处理单个查询并显示结果
 func FOCMD(s string, h bool, onlyIP bool) error {
+	// 验证输入
+	if s == "" {
+		return fmt.Errorf("查询语句不能为空")
+	}
+
+	// 读取配置
 	conf := Config{}
-	content, err := ioutil.ReadFile(config.GetConfigPath())
+	content, err := os.ReadFile(config.GetConfigPath())
 	if err != nil {
-		fmt.Printf("配置文件读取错误: %v", err)
+		gologger.Error().Msgf("配置文件读取错误: %v", err)
 		return err
-	}
-	if yaml.Unmarshal(content, &conf) != nil {
-		fmt.Printf("解析config.yaml出错: %v", err)
-		return err
-	}
-	// 检查 s 是否包含 &
-	if strings.Contains(s, "&") {
-		s = "'" + s + "'"
-	}
-	// 打印调试信息
-	fmt.Printf("查询语句: %s\n", s)
-
-	aa := base64.StdEncoding.EncodeToString([]byte(s))
-	//aa := base64.URLEncoding.EncodeToString([]byte(s))
-	fmt.Println("base64编码后的查询语句:", aa)
-	// 确认base64编码结果
-	// decoded, _ := base64.StdEncoding.DecodeString(aa)
-	// fmt.Println("解码后的查询语句:", string(decoded))
-
-	var key string = conf.Fofa.Key
-	var page string = "1"
-	var size string = "1000"
-	var fields string = "ip,domain,port,protocol,link,title,server"
-	var url string = "https://fofa.info/api/v1/search/all?key=" + key + "&qbase64=" + aa + "&page=" + page + "&size=" + size + "&fields=" + fields
-
-	// 打印调试信息
-	//gologger.Debug().Msgf("请求URL: %s", url)
-
-	// request := gorequest.New()
-	// resp, body, errs := request.Get(url).
-	// 	Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36").
-	// 	Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
-	// 	Set("Accept-Language", "zh-CN,zh;q=0.8").
-	// 	End()
-	request := gorequest.New()
-	resp, _, _ := request.Get(url).End()
-	resp.Header.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36")
-	resp.Header.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-	resp.Header.Add("Accept-Language", "zh-CN,zh;q=0.8")
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Print(err)
-		return err
-	}
-
-	// if len(errs) > 0 {
-	// 	return errs[0]
-	// }
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("请求失败，状态码: %d", resp.StatusCode)
-	}
-
-	var d Fofa
-	if err := json.Unmarshal([]byte(body), &d); err != nil {
-		return fmt.Errorf("解析响应失败: %v", err)
-	}
-
-	// if len(d.Results) == 0 {
-	// 	gologger.Info().Msgf("未找到结果")
-	// 	return nil
-	// }
-
-	// 打印结果数量
-	//gologger.Info().Msgf("找到 %d 条结果", len(d.Results))
-
-	if onlyIP {
-		// 只输出IP
-		// for _, row := range d.Results {
-		// 	if len(row) > 0 {
-		// 		fmt.Println(row[0]) // IP在第一列
-		// 	}
-		// }
-		uniqueIP := deduplicateIP(d.Results)
-		for _, ip := range uniqueIP {
-			fmt.Println(ip)
-		}
-	} else if h {
-		//data(d.Results)
-		hata(d.Results)
-	} else {
-		data(d.Results)
-	}
-
-	return nil
-}
-
-func FOF(s string, outputFile string) error {
-	conf := Config{}
-	content, err := ioutil.ReadFile(config.GetConfigPath())
-	if err != nil {
-		return fmt.Errorf("配置文件读取错误: %v", err)
 	}
 	if err := yaml.Unmarshal(content, &conf); err != nil {
-		return fmt.Errorf("解析config.yaml出错: %v", err)
+		gologger.Error().Msgf("解析config.yaml出错: %v", err)
+		return err
 	}
 
-	aa := base64.URLEncoding.EncodeToString([]byte(s))
-	var key string = conf.Fofa.Key
+	// 验证API密钥
+	if conf.Fofa.Key == "" {
+		return fmt.Errorf("Fofa API密钥未配置，请在配置文件中设置")
+	}
 
-	var page string = "1"
-	var size string = "1000"
-	var fields string = "ip,domain,port,protocol,link,title,server"
-	var url string = "https://fofa.info/api/v1/search/all?key=" + key + "&qbase64=" + aa + "&page=" + page + "&size=" + size + "&fields=" + fields
+	// 处理查询语句
+	// 保存原始查询语句以便输出
+	originalQuery := s
 
+	// 检查查询语句是否包含逻辑运算符
+	if strings.Contains(s, "&&") || strings.Contains(s, "||") {
+		// 处理复杂查询（包含逻辑运算符）
+		s = processComplexQuery(s)
+	} else if strings.Contains(s, "=") {
+		// 处理简单查询（单个键值对）
+		s = processSimpleQuery(s)
+	}
+
+	gologger.Info().Msgf("原始查询语句: %s", originalQuery)
+	gologger.Info().Msgf("处理后的查询语句: %s", s)
+
+	// Base64编码查询语句
+	queryBase64 := base64.StdEncoding.EncodeToString([]byte(s))
+	gologger.Debug().Msgf("base64编码后的查询语句: %s", queryBase64)
+
+	// 构建请求URL
+	url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=%s&size=%s&fields=%s",
+		FofaAPIURL, conf.Fofa.Key, queryBase64, DefaultPage, DefaultPageSize, DefaultFields)
+
+	// 发送请求
 	request := gorequest.New()
 	resp, body, errs := request.Get(url).
 		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36").
@@ -149,27 +93,201 @@ func FOF(s string, outputFile string) error {
 		Set("Accept-Language", "zh-CN,zh;q=0.8").
 		End()
 
+	// 处理请求错误
 	if len(errs) > 0 {
-		return fmt.Errorf("请求失败: %v", errs[0])
+		gologger.Error().Msgf("请求失败: %v", errs[0])
+		return errs[0]
 	}
 
+	// 检查HTTP状态码
 	if resp.StatusCode != 200 {
+		gologger.Error().Msgf("请求失败，状态码: %d", resp.StatusCode)
 		return fmt.Errorf("请求失败，状态码: %d", resp.StatusCode)
 	}
 
+	// 解析响应
 	var d Fofa
 	if err := json.Unmarshal([]byte(body), &d); err != nil {
+		gologger.Error().Msgf("解析响应失败: %v", err)
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	// 显示结果数量
+	gologger.Info().Msgf("找到 %d 条结果", len(d.Results))
+
+	// 根据选项输出结果
+	if onlyIP {
+		// 只输出IP
+		uniqueIP := deduplicateIP(d.Results)
+		gologger.Info().Msgf("去重后共 %d 个唯一IP", len(uniqueIP))
+		for _, ip := range uniqueIP {
+			fmt.Println(ip)
+		}
+	} else if h {
+		// 只输出链接
+		hata(d.Results)
+	} else {
+		// 表格输出所有信息
+		data(d.Results)
+	}
+
+	return nil
+}
+
+// FOF 处理单个查询并将结果写入文件
+func FOF(s string, outputFile string) error {
+	// 验证输入
+	if s == "" {
+		return fmt.Errorf("查询语句不能为空")
+	}
+	if outputFile == "" {
+		return fmt.Errorf("输出文件路径不能为空")
+	}
+
+	// 读取配置
+	conf := Config{}
+	content, err := os.ReadFile(config.GetConfigPath())
+	if err != nil {
+		gologger.Error().Msgf("配置文件读取错误: %v", err)
+		return fmt.Errorf("配置文件读取错误: %v", err)
+	}
+	if err := yaml.Unmarshal(content, &conf); err != nil {
+		gologger.Error().Msgf("解析config.yaml出错: %v", err)
+		return fmt.Errorf("解析config.yaml出错: %v", err)
+	}
+
+	// 验证API密钥
+	if conf.Fofa.Key == "" {
+		return fmt.Errorf("Fofa API密钥未配置，请在配置文件中设置")
+	}
+
+	// 处理查询语句
+	// 保存原始查询语句以便输出
+	originalQuery := s
+
+	// 检查查询语句是否包含逻辑运算符
+	if strings.Contains(s, "&&") || strings.Contains(s, "||") {
+		// 处理复杂查询（包含逻辑运算符）
+		s = processComplexQuery(s)
+	} else if strings.Contains(s, "=") {
+		// 处理简单查询（单个键值对）
+		s = processSimpleQuery(s)
+	}
+
+	gologger.Debug().Msgf("原始查询语句: %s", originalQuery)
+	gologger.Debug().Msgf("处理后的查询语句: %s", s)
+
+	// Base64编码查询语句 - 使用与FOCMD相同的编码方式
+	queryBase64 := base64.StdEncoding.EncodeToString([]byte(s))
+
+	// 构建请求URL
+	url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=%s&size=%s&fields=%s",
+		FofaAPIURL, conf.Fofa.Key, queryBase64, DefaultPage, DefaultPageSize, DefaultFields)
+
+	// 发送请求
+	request := gorequest.New()
+	resp, body, errs := request.Get(url).
+		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36").
+		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
+		Set("Accept-Language", "zh-CN,zh;q=0.8").
+		End()
+
+	// 处理请求错误
+	if len(errs) > 0 {
+		gologger.Error().Msgf("请求失败: %v", errs[0])
+		return fmt.Errorf("请求失败: %v", errs[0])
+	}
+
+	// 检查HTTP状态码
+	if resp.StatusCode != 200 {
+		gologger.Error().Msgf("请求失败，状态码: %d", resp.StatusCode)
+		return fmt.Errorf("请求失败，状态码: %d", resp.StatusCode)
+	}
+
+	// 解析响应
+	var d Fofa
+	if err := json.Unmarshal([]byte(body), &d); err != nil {
+		gologger.Error().Msgf("解析响应失败: %v", err)
 		return fmt.Errorf("解析响应失败: %v", err)
 	}
 
 	// 检查是否有结果
 	if len(d.Results) == 0 {
+		gologger.Warning().Msgf("未找到结果: %s", s)
 		return fmt.Errorf("未找到结果: %s", s)
 	}
+
+	// 输出链接
 	hata(d.Results)
+
+	// 将结果写入CSV文件
+	gologger.Info().Msgf("将 %d 条结果写入文件: %s", len(d.Results), outputFile)
+
+	// 使用公共函数写入CSV文件
+	if err := AppendToCSV(d.Results, outputFile); err != nil {
+		gologger.Error().Msgf("写入数据失败: %v", err)
+		return fmt.Errorf("写入数据失败: %v", err)
+	}
+
+	// 输出处理进度
+	gologger.Info().Msgf("已处理查询: %s, 找到 %d 条结果", s, len(d.Results))
+
+	return nil
+}
+
+// WriteToCSV 将结果写入CSV文件 - 创建新文件并写入数据
+func WriteToCSV(results [][]string, outputFile string) error {
+	if outputFile == "" {
+		outputFile = "fofa.csv"
+		gologger.Info().Msgf("未指定输出文件，使用默认文件名: %s", outputFile)
+	}
+
+	// 创建或打开文件
+	gologger.Debug().Msgf("创建文件: %s", outputFile)
+	f, err := os.Create(outputFile)
+	if err != nil {
+		gologger.Error().Msgf("创建文件失败: %v", err)
+		return fmt.Errorf("创建文件失败: %v", err)
+	}
+	defer f.Close()
+
+	// 写入 UTF-8 BOM
+	f.WriteString("\xEF\xBB\xBF")
+
+	writer := csv.NewWriter(f)
+	defer writer.Flush()
+
+	// 写入表头
+	headers := []string{"IP", "Domain", "Port", "Protocol", "Link", "Title", "Server"}
+	if err := writer.Write(headers); err != nil {
+		gologger.Error().Msgf("写入表头失败: %v", err)
+		return fmt.Errorf("写入表头失败: %v", err)
+	}
+
+	// 写入数据
+	gologger.Info().Msgf("正在写入 %d 条数据...", len(results))
+	for _, result := range results {
+		if err := writer.Write(result); err != nil {
+			gologger.Error().Msgf("写入数据行失败: %v", err)
+			return fmt.Errorf("写入数据行失败: %v", err)
+		}
+	}
+
+	gologger.Info().Msgf("成功写入 %d 条数据到文件: %s", len(results), outputFile)
+	return nil
+}
+
+// AppendToCSV 将结果追加到现有CSV文件中
+func AppendToCSV(results [][]string, outputFile string) error {
+	if outputFile == "" {
+		outputFile = "fofa.csv"
+		gologger.Info().Msgf("未指定输出文件，使用默认文件名: %s", outputFile)
+	}
+
 	// 以追加模式打开文件
 	f, err := os.OpenFile(outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
+		gologger.Error().Msgf("打开文件失败: %v", err)
 		return fmt.Errorf("打开文件失败: %v", err)
 	}
 	defer f.Close()
@@ -184,46 +302,10 @@ func FOF(s string, outputFile string) error {
 	}
 
 	// 写入数据
-	for _, result := range d.Results {
-		if err := writer.Write(result); err != nil {
-			return fmt.Errorf("写入数据行失败: %v", err)
-		}
-	}
-
-	// 输出处理进度
-	//gologger.Info().Msgf("已处理查询: %s, 找到 %d 条结果", s, len(d.Results))
-
-	return nil
-}
-
-// 新增一个专门的CSV写入函数
-func writeToCSV(results [][]string, outputFile string) error {
-	if outputFile == "" {
-		outputFile = "fofa.csv"
-	}
-
-	// 创建或打开文件
-	f, err := os.Create(outputFile)
-	if err != nil {
-		return fmt.Errorf("创建文件失败: %v", err)
-	}
-	defer f.Close()
-
-	// 写入 UTF-8 BOM
-	f.WriteString("\xEF\xBB\xBF")
-
-	writer := csv.NewWriter(f)
-	defer writer.Flush()
-
-	// 写入表头
-	headers := []string{"IP", "Domain", "Port", "Protocol", "Link", "Title", "Server"}
-	if err := writer.Write(headers); err != nil {
-		return fmt.Errorf("写入表头失败: %v", err)
-	}
-
-	// 写入数据
+	gologger.Debug().Msgf("正在写入 %d 条数据...", len(results))
 	for _, result := range results {
 		if err := writer.Write(result); err != nil {
+			gologger.Error().Msgf("写入数据行失败: %v", err)
 			return fmt.Errorf("写入数据行失败: %v", err)
 		}
 	}
