@@ -19,6 +19,10 @@ import (
 
 type Fofa struct {
 	Results [][]string `json:"results"`
+	Size    int        `json:"size"`
+	Page    int        `json:"page"`
+	Mode    string     `json:"mode"`
+	Query   string     `json:"query"`
 }
 
 // API相关常量
@@ -91,10 +95,60 @@ func FOCMD(s string, h bool, onlyIP bool, maxResults int) error {
 	// 总结果数
 	totalResults := 0
 
+	// 先发送一个请求获取总结果数量
+	// 构建请求URL，只获取1条结果，主要是为了获取总数量
+	url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=1&size=1&fields=%s",
+		FofaAPIURL, conf.Fofa.Key, queryBase64, DefaultFields)
+
+	// 发送请求
+	request := gorequest.New()
+	resp, body, errs := request.Get(url).
+		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36").
+		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
+		Set("Accept-Language", "zh-CN,zh;q=0.8").
+		End()
+
+	// 处理请求错误
+	if len(errs) > 0 {
+		gologger.Error().Msgf("请求失败: %v", errs[0])
+		return errs[0]
+	}
+
+	// 检查HTTP状态码
+	if resp.StatusCode != 200 {
+		gologger.Error().Msgf("请求失败，状态码: %d", resp.StatusCode)
+		return fmt.Errorf("请求失败，状态码: %d", resp.StatusCode)
+	}
+
+	// 解析响应
+	var initialResponse Fofa
+	if err := json.Unmarshal([]byte(body), &initialResponse); err != nil {
+		gologger.Error().Msgf("解析响应失败: %v", err)
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	// 获取总结果数量
+	totalAvailable := initialResponse.Size
+	gologger.Info().Msgf("查询总结果数量: %d", totalAvailable)
+
 	// 处理用户指定的最大结果数量
 	maxLimit := maxResults
-	if maxLimit <= 0 || maxLimit > MaxResults {
+	if maxLimit <= 0 {
+		// 如果用户没有指定或指定为0，则获取所有可用结果，但不超过API限制
+		if totalAvailable > MaxResults {
+			maxLimit = MaxResults
+			gologger.Warning().Msgf("总结果数量(%d)超过API限制(%d)，将只获取前%d条结果", totalAvailable, MaxResults, MaxResults)
+		} else {
+			maxLimit = totalAvailable
+		}
+	} else if maxLimit > MaxResults {
+		// 如果用户指定的数量超过API限制，则使用API限制
 		maxLimit = MaxResults
+		gologger.Warning().Msgf("指定的最大结果数量(%d)超过API限制(%d)，将只获取前%d条结果", maxResults, MaxResults, MaxResults)
+	} else if maxLimit > totalAvailable {
+		// 如果用户指定的数量超过总结果数量，则使用总结果数量
+		maxLimit = totalAvailable
+		gologger.Info().Msgf("指定的最大结果数量(%d)超过总结果数量(%d)，将获取所有%d条结果", maxResults, totalAvailable, totalAvailable)
 	}
 
 	// 循环获取所有页的数据，直到没有更多结果或者达到最大限制
@@ -243,10 +297,60 @@ func FOF(s string, outputFile string, maxResults int) error {
 	// 总结果数
 	totalResults := 0
 
+	// 先发送一个请求获取总结果数量
+	// 构建请求URL，只获取1条结果，主要是为了获取总数量
+	url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=1&size=1&fields=%s",
+		FofaAPIURL, conf.Fofa.Key, queryBase64, DefaultFields)
+
+	// 发送请求
+	request := gorequest.New()
+	resp, body, errs := request.Get(url).
+		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36").
+		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
+		Set("Accept-Language", "zh-CN,zh;q=0.8").
+		End()
+
+	// 处理请求错误
+	if len(errs) > 0 {
+		gologger.Error().Msgf("请求失败: %v", errs[0])
+		return errs[0]
+	}
+
+	// 检查HTTP状态码
+	if resp.StatusCode != 200 {
+		gologger.Error().Msgf("请求失败，状态码: %d", resp.StatusCode)
+		return fmt.Errorf("请求失败，状态码: %d", resp.StatusCode)
+	}
+
+	// 解析响应
+	var initialResponse Fofa
+	if err := json.Unmarshal([]byte(body), &initialResponse); err != nil {
+		gologger.Error().Msgf("解析响应失败: %v", err)
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	// 获取总结果数量
+	totalAvailable := initialResponse.Size
+	gologger.Info().Msgf("查询总结果数量: %d", totalAvailable)
+
 	// 处理用户指定的最大结果数量
 	maxLimit := maxResults
-	if maxLimit <= 0 || maxLimit > MaxResults {
+	if maxLimit <= 0 {
+		// 如果用户没有指定或指定为0，则获取所有可用结果，但不超过API限制
+		if totalAvailable > MaxResults {
+			maxLimit = MaxResults
+			gologger.Warning().Msgf("总结果数量(%d)超过API限制(%d)，将只获取前%d条结果", totalAvailable, MaxResults, MaxResults)
+		} else {
+			maxLimit = totalAvailable
+		}
+	} else if maxLimit > MaxResults {
+		// 如果用户指定的数量超过API限制，则使用API限制
 		maxLimit = MaxResults
+		gologger.Warning().Msgf("指定的最大结果数量(%d)超过API限制(%d)，将只获取前%d条结果", maxResults, MaxResults, MaxResults)
+	} else if maxLimit > totalAvailable {
+		// 如果用户指定的数量超过总结果数量，则使用总结果数量
+		maxLimit = totalAvailable
+		gologger.Info().Msgf("指定的最大结果数量(%d)超过总结果数量(%d)，将获取所有%d条结果", maxResults, totalAvailable, totalAvailable)
 	}
 
 	// 初始化文件，写入表头
