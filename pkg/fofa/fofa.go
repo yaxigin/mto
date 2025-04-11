@@ -91,11 +91,24 @@ func FOCMD(s string, h bool, onlyIP bool, maxResults int) error {
 	// 总结果数
 	totalResults := 0
 
+	// 处理用户指定的最大结果数量
+	maxLimit := maxResults
+	if maxLimit <= 0 || maxLimit > MaxResults {
+		maxLimit = MaxResults
+	}
+
 	// 循环获取所有页的数据，直到没有更多结果或者达到最大限制
 	for {
+		// 计算当前页需要获取的数量
+		pageSize := 1000 // 默认每页最大1000条
+		if maxLimit-totalResults < 1000 {
+			// 如果剩余需要获取的数量小于1000，则只获取需要的数量
+			pageSize = maxLimit - totalResults
+		}
+
 		// 构建请求URL
-		url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=%d&size=%s&fields=%s",
-			FofaAPIURL, conf.Fofa.Key, queryBase64, currentPage, DefaultPageSize, DefaultFields)
+		url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=%d&size=%d&fields=%s",
+			FofaAPIURL, conf.Fofa.Key, queryBase64, currentPage, pageSize, DefaultFields)
 
 		// 发送请求
 		request := gorequest.New()
@@ -136,17 +149,12 @@ func FOCMD(s string, h bool, onlyIP bool, maxResults int) error {
 		// 显示当前进度
 		gologger.Info().Msgf("第 %d 页，当前已获取 %d 条结果", currentPage, totalResults)
 
-		// 如果当前页的结果数量少于每页最大数量，说明已经没有更多结果
-		if len(d.Results) < 1000 {
+		// 如果当前页的结果数量少于请求的数量，说明已经没有更多结果
+		if len(d.Results) < pageSize {
 			break
 		}
 
 		// 如果已经达到最大结果数量限制，跳出循环
-		// 使用用户指定的最大结果数量，如果没有指定，则使用默认值
-		maxLimit := maxResults
-		if maxLimit <= 0 || maxLimit > MaxResults {
-			maxLimit = MaxResults
-		}
 		if totalResults >= maxLimit {
 			gologger.Warning().Msgf("已达到最大结果数量限制 %d 条", maxLimit)
 			break
@@ -235,6 +243,12 @@ func FOF(s string, outputFile string, maxResults int) error {
 	// 总结果数
 	totalResults := 0
 
+	// 处理用户指定的最大结果数量
+	maxLimit := maxResults
+	if maxLimit <= 0 || maxLimit > MaxResults {
+		maxLimit = MaxResults
+	}
+
 	// 初始化文件，写入表头
 	if err := initCSVFile(outputFile); err != nil {
 		gologger.Error().Msgf("初始化文件失败: %v", err)
@@ -243,9 +257,16 @@ func FOF(s string, outputFile string, maxResults int) error {
 
 	// 循环获取所有页的数据，直到没有更多结果或者达到最大限制
 	for {
+		// 计算当前页需要获取的数量
+		pageSize := 1000 // 默认每页最大1000条
+		if maxLimit-totalResults < 1000 {
+			// 如果剩余需要获取的数量小于1000，则只获取需要的数量
+			pageSize = maxLimit - totalResults
+		}
+
 		// 构建请求URL
-		url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=%d&size=%s&fields=%s",
-			FofaAPIURL, conf.Fofa.Key, queryBase64, currentPage, DefaultPageSize, DefaultFields)
+		url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=%d&size=%d&fields=%s",
+			FofaAPIURL, conf.Fofa.Key, queryBase64, currentPage, pageSize, DefaultFields)
 
 		// 发送请求
 		request := gorequest.New()
@@ -303,17 +324,12 @@ func FOF(s string, outputFile string, maxResults int) error {
 			return fmt.Errorf("写入数据失败: %v", err)
 		}
 
-		// 如果当前页的结果数量少于每页最大数量，说明已经没有更多结果
-		if len(d.Results) < 1000 {
+		// 如果当前页的结果数量少于请求的数量，说明已经没有更多结果
+		if len(d.Results) < pageSize {
 			break
 		}
 
 		// 如果已经达到最大结果数量限制，跳出循环
-		// 使用用户指定的最大结果数量，如果没有指定，则使用默认值
-		maxLimit := maxResults
-		if maxLimit <= 0 || maxLimit > MaxResults {
-			maxLimit = MaxResults
-		}
 		if totalResults >= maxLimit {
 			gologger.Warning().Msgf("已达到最大结果数量限制 %d 条", maxLimit)
 			break
