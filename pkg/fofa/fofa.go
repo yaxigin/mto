@@ -17,6 +17,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// 传统翻页API响应结构
 type Fofa struct {
 	Results [][]string `json:"results"`
 	Size    int        `json:"size"`
@@ -25,11 +26,20 @@ type Fofa struct {
 	Query   string     `json:"query"`
 }
 
+// 连续翻页API响应结构
+type FofaNext struct {
+	Error   bool       `json:"error"`
+	Size    int        `json:"size"`
+	Page    int        `json:"page"`
+	Results [][]string `json:"results"`
+	Next    string     `json:"next"`
+}
+
 // API相关常量
 const (
 	DefaultPageSize = "1000"
-	DefaultPage     = "1"
-	FofaAPIURL      = "https://fofa.info/api/v1/search/all"
+	FofaAPIURL      = "https://fofa.info/api/v1/search/all"  // 传统翻页API
+	FofaNextAPIURL  = "https://fofa.info/api/v1/search/next" // 连续翻页API
 	DefaultFields   = "ip,domain,port,protocol,link,title,server"
 	MaxResults      = 10000 // FOFA API最大支持查询10000条结果
 )
@@ -44,7 +54,7 @@ type Config struct {
 }
 
 // FOCMD 处理单个查询并显示结果
-func FOCMD(s string, h bool, onlyIP bool, maxResults int) error {
+func FOCMD(s string, h bool, onlyIP bool, maxResults int, useNext bool) error {
 	// 验证输入
 	if s == "" {
 		return fmt.Errorf("查询语句不能为空")
@@ -90,79 +100,107 @@ func FOCMD(s string, h bool, onlyIP bool, maxResults int) error {
 	// 初始化结果列表
 	var allResults [][]string
 
-	// 当前页码
-	currentPage := 1
 	// 总结果数
 	totalResults := 0
-
-	// 先发送一个请求获取总结果数量
-	// 构建请求URL，只获取1条结果，主要是为了获取总数量
-	url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=1&size=1&fields=%s",
-		FofaAPIURL, conf.Fofa.Key, queryBase64, DefaultFields)
-
-	// 发送请求
-	request := gorequest.New()
-	resp, body, errs := request.Get(url).
-		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36").
-		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
-		Set("Accept-Language", "zh-CN,zh;q=0.8").
-		End()
-
-	// 处理请求错误
-	if len(errs) > 0 {
-		gologger.Error().Msgf("请求失败: %v", errs[0])
-		return errs[0]
-	}
-
-	// 检查HTTP状态码
-	if resp.StatusCode != 200 {
-		gologger.Error().Msgf("请求失败，状态码: %d", resp.StatusCode)
-		return fmt.Errorf("请求失败，状态码: %d", resp.StatusCode)
-	}
-
-	// 解析响应
-	var initialResponse Fofa
-	if err := json.Unmarshal([]byte(body), &initialResponse); err != nil {
-		gologger.Error().Msgf("解析响应失败: %v", err)
-		return fmt.Errorf("解析响应失败: %v", err)
-	}
-
-	// 获取总结果数量
-	totalAvailable := initialResponse.Size
-	gologger.Info().Msgf("查询总结果数量: %d", totalAvailable)
 
 	// 处理用户指定的最大结果数量
 	maxLimit := maxResults
 	if maxLimit <= 0 {
-		// 如果用户没有指定或指定为0，则获取所有可用结果，但不超过API限制
-		if totalAvailable > MaxResults {
-			maxLimit = MaxResults
-			gologger.Warning().Msgf("总结果数量(%d)超过API限制(%d)，将只获取前%d条结果", totalAvailable, MaxResults, MaxResults)
-		} else {
-			maxLimit = totalAvailable
-		}
+		// 如果用户没有指定或指定为0，则使用默认值1000
+		maxLimit = 1000
 	} else if maxLimit > MaxResults {
 		// 如果用户指定的数量超过API限制，则使用API限制
 		maxLimit = MaxResults
 		gologger.Warning().Msgf("指定的最大结果数量(%d)超过API限制(%d)，将只获取前%d条结果", maxResults, MaxResults, MaxResults)
-	} else if maxLimit > totalAvailable {
-		// 如果用户指定的数量超过总结果数量，则使用总结果数量
-		maxLimit = totalAvailable
-		gologger.Info().Msgf("指定的最大结果数量(%d)超过总结果数量(%d)，将获取所有%d条结果", maxResults, totalAvailable, totalAvailable)
 	}
 
-	// 循环获取所有页的数据，直到没有更多结果或者达到最大限制
-	for {
-		// 计算当前页需要获取的数量
-		pageSize := 1000 // 默认每页最大1000条
-		if maxLimit-totalResults < 1000 {
-			// 如果剩余需要获取的数量小于1000，则只获取需要的数量
-			pageSize = maxLimit - totalResults
+	// 根据用户选择使用不同的翻页方式
+	if useNext {
+		// 使用连续翻页接口
+		gologger.Info().Msgf("使用连续翻页接口获取数据")
+
+		// 初始化next参数，第一次请求不需要指定next参数
+		nextParam := ""
+
+		// 循环获取所有页的数据，直到没有更多结果或者达到最大限制
+		for {
+			// 连续翻页接口每页固定使用 10000 条结果
+			const pageSize = 10000
+
+			// 构建请求URL
+			var url string
+			if nextParam == "" {
+				// 第一次请求，不需要指定next参数
+				url = fmt.Sprintf("%s?key=%s&qbase64=%s&size=%d&fields=%s",
+					FofaNextAPIURL, conf.Fofa.Key, queryBase64, pageSize, DefaultFields)
+			} else {
+				// 后续请求，带上next参数
+				url = fmt.Sprintf("%s?key=%s&qbase64=%s&size=%d&fields=%s&next=%s",
+					FofaNextAPIURL, conf.Fofa.Key, queryBase64, pageSize, DefaultFields, nextParam)
+			}
+
+			request := gorequest.New()
+			resp, body, errs := request.Get(url).
+				Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36").
+				Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
+				Set("Accept-Language", "zh-CN,zh;q=0.8").
+				End()
+
+			if len(errs) > 0 {
+				gologger.Error().Msgf("请求失败: %v", errs[0])
+				return errs[0]
+			}
+
+			if resp.StatusCode != 200 {
+				gologger.Error().Msgf("请求失败，状态码: %d", resp.StatusCode)
+				return fmt.Errorf("请求失败，状态码: %d", resp.StatusCode)
+			}
+
+			var d FofaNext
+			if err := json.Unmarshal([]byte(body), &d); err != nil {
+				gologger.Error().Msgf("解析响应失败: %v", err)
+				return fmt.Errorf("解析响应失败: %v", err)
+			}
+
+			if d.Error {
+				gologger.Error().Msgf("请求出错: %s", body)
+				return fmt.Errorf("请求出错: %s", body)
+			}
+
+			if len(d.Results) == 0 {
+				break
+			}
+
+			// 添加当前页的结果到总结果中
+			allResults = append(allResults, d.Results...)
+			totalResults += len(d.Results)
+
+			gologger.Info().Msgf("当前已获取 %d 条结果，查询总数量: %d", totalResults, d.Size)
+
+			// 如果没有next参数，说明已经没有更多结果
+			if d.Next == "" {
+				gologger.Info().Msgf("没有更多结果了")
+				break
+			}
+
+			// 连续翻页接口不使用 maxLimit 参数，获取所有可用结果
+
+			// 更新next参数，继续获取下一页
+			nextParam = d.Next
+
+			// 添加延时，避免请求过快
+			time.Sleep(1 * time.Second)
 		}
+	} else {
+		// 使用传统查询接口，不使用翻页
+		gologger.Info().Msgf("使用传统查询接口获取数据")
+
+		// 使用用户指定的数量
+		pageSize := maxLimit
 
 		// 构建请求URL
-		url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=%d&size=%d&fields=%s",
-			FofaAPIURL, conf.Fofa.Key, queryBase64, currentPage, pageSize, DefaultFields)
+		url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=1&size=%d&fields=%s",
+			FofaAPIURL, conf.Fofa.Key, queryBase64, pageSize, DefaultFields)
 
 		// 发送请求
 		request := gorequest.New()
@@ -193,32 +231,16 @@ func FOCMD(s string, h bool, onlyIP bool, maxResults int) error {
 
 		// 如果没有结果，跳出循环
 		if len(d.Results) == 0 {
-			break
+			gologger.Warning().Msgf("未找到结果: %s", s)
+			return fmt.Errorf("未找到结果: %s", s)
 		}
 
-		// 添加当前页的结果到总结果中
+		// 添加结果到总结果中
 		allResults = append(allResults, d.Results...)
 		totalResults += len(d.Results)
 
-		// 显示当前进度
-		gologger.Info().Msgf("第 %d 页，当前已获取 %d 条结果", currentPage, totalResults)
-
-		// 如果当前页的结果数量少于请求的数量，说明已经没有更多结果
-		if len(d.Results) < pageSize {
-			break
-		}
-
-		// 如果已经达到最大结果数量限制，跳出循环
-		if totalResults >= maxLimit {
-			gologger.Warning().Msgf("已达到最大结果数量限制 %d 条", maxLimit)
-			break
-		}
-
-		// 页码加1，继续获取下一页
-		currentPage++
-
-		// 添加延时，避免请求过快
-		time.Sleep(1 * time.Second)
+		// 显示当前进度和总数量
+		gologger.Info().Msgf("获取到 %d 条结果，查询总数量: %d", totalResults, d.Size)
 	}
 
 	// 显示总结果数量
@@ -244,7 +266,7 @@ func FOCMD(s string, h bool, onlyIP bool, maxResults int) error {
 }
 
 // FOF 处理单个查询并将结果写入文件
-func FOF(s string, outputFile string, maxResults int) error {
+func FOF(s string, outputFile string, maxResults int, useNext bool) error {
 	// 验证输入
 	if s == "" {
 		return fmt.Errorf("查询语句不能为空")
@@ -289,68 +311,18 @@ func FOF(s string, outputFile string, maxResults int) error {
 	// Base64编码查询语句
 	queryBase64 := base64.StdEncoding.EncodeToString([]byte(s))
 
-	// 初始化结果列表
-	var allResults [][]string
-
-	// 当前页码
-	currentPage := 1
 	// 总结果数
 	totalResults := 0
-
-	// 先发送一个请求获取总结果数量
-	// 构建请求URL，只获取1条结果，主要是为了获取总数量
-	url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=1&size=1&fields=%s",
-		FofaAPIURL, conf.Fofa.Key, queryBase64, DefaultFields)
-
-	// 发送请求
-	request := gorequest.New()
-	resp, body, errs := request.Get(url).
-		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36").
-		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
-		Set("Accept-Language", "zh-CN,zh;q=0.8").
-		End()
-
-	// 处理请求错误
-	if len(errs) > 0 {
-		gologger.Error().Msgf("请求失败: %v", errs[0])
-		return errs[0]
-	}
-
-	// 检查HTTP状态码
-	if resp.StatusCode != 200 {
-		gologger.Error().Msgf("请求失败，状态码: %d", resp.StatusCode)
-		return fmt.Errorf("请求失败，状态码: %d", resp.StatusCode)
-	}
-
-	// 解析响应
-	var initialResponse Fofa
-	if err := json.Unmarshal([]byte(body), &initialResponse); err != nil {
-		gologger.Error().Msgf("解析响应失败: %v", err)
-		return fmt.Errorf("解析响应失败: %v", err)
-	}
-
-	// 获取总结果数量
-	totalAvailable := initialResponse.Size
-	gologger.Info().Msgf("查询总结果数量: %d", totalAvailable)
 
 	// 处理用户指定的最大结果数量
 	maxLimit := maxResults
 	if maxLimit <= 0 {
-		// 如果用户没有指定或指定为0，则获取所有可用结果，但不超过API限制
-		if totalAvailable > MaxResults {
-			maxLimit = MaxResults
-			gologger.Warning().Msgf("总结果数量(%d)超过API限制(%d)，将只获取前%d条结果", totalAvailable, MaxResults, MaxResults)
-		} else {
-			maxLimit = totalAvailable
-		}
+		// 如果用户没有指定或指定为0，则使用默认值1000
+		maxLimit = 1000
 	} else if maxLimit > MaxResults {
 		// 如果用户指定的数量超过API限制，则使用API限制
 		maxLimit = MaxResults
 		gologger.Warning().Msgf("指定的最大结果数量(%d)超过API限制(%d)，将只获取前%d条结果", maxResults, MaxResults, MaxResults)
-	} else if maxLimit > totalAvailable {
-		// 如果用户指定的数量超过总结果数量，则使用总结果数量
-		maxLimit = totalAvailable
-		gologger.Info().Msgf("指定的最大结果数量(%d)超过总结果数量(%d)，将获取所有%d条结果", maxResults, totalAvailable, totalAvailable)
 	}
 
 	// 初始化文件，写入表头
@@ -359,18 +331,113 @@ func FOF(s string, outputFile string, maxResults int) error {
 		return fmt.Errorf("初始化文件失败: %v", err)
 	}
 
-	// 循环获取所有页的数据，直到没有更多结果或者达到最大限制
-	for {
-		// 计算当前页需要获取的数量
-		pageSize := 1000 // 默认每页最大1000条
-		if maxLimit-totalResults < 1000 {
-			// 如果剩余需要获取的数量小于1000，则只获取需要的数量
-			pageSize = maxLimit - totalResults
+	// 根据用户选择使用不同的翻页方式
+	if useNext {
+		// 使用连续翻页接口
+		gologger.Info().Msgf("使用连续翻页接口获取数据")
+
+		// 初始化next参数，第一次请求不需要指定next参数
+		nextParam := ""
+
+		// 循环获取所有页的数据，直到没有更多结果或者达到最大限制
+		for {
+			// 连续翻页接口每页固定使用 10000 条结果
+			const pageSize = 10000
+
+			// 构建请求URL
+			var url string
+			if nextParam == "" {
+				// 第一次请求
+				url = fmt.Sprintf("%s?key=%s&qbase64=%s&size=%d&fields=%s",
+					FofaNextAPIURL, conf.Fofa.Key, queryBase64, pageSize, DefaultFields)
+			} else {
+				// 后续请求，带上next参数
+				url = fmt.Sprintf("%s?key=%s&qbase64=%s&size=%d&fields=%s&next=%s",
+					FofaNextAPIURL, conf.Fofa.Key, queryBase64, pageSize, DefaultFields, nextParam)
+			}
+
+			// 发送请求
+			request := gorequest.New()
+			resp, body, errs := request.Get(url).
+				Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36").
+				Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
+				Set("Accept-Language", "zh-CN,zh;q=0.8").
+				End()
+
+			// 处理请求错误
+			if len(errs) > 0 {
+				gologger.Error().Msgf("请求失败: %v", errs[0])
+				return fmt.Errorf("请求失败: %v", errs[0])
+			}
+
+			// 检查HTTP状态码
+			if resp.StatusCode != 200 {
+				gologger.Error().Msgf("请求失败，状态码: %d", resp.StatusCode)
+				return fmt.Errorf("请求失败，状态码: %d", resp.StatusCode)
+			}
+
+			// 解析响应
+			var d FofaNext
+			if err := json.Unmarshal([]byte(body), &d); err != nil {
+				gologger.Error().Msgf("解析响应失败: %v", err)
+				return fmt.Errorf("解析响应失败: %v", err)
+			}
+
+			// 检查是否有错误
+			if d.Error {
+				gologger.Error().Msgf("请求出错: %s", body)
+				return fmt.Errorf("请求出错: %s", body)
+			}
+
+			// 如果没有结果，跳出循环
+			if len(d.Results) == 0 {
+				break
+			}
+
+			// 更新总结果数量
+			totalResults += len(d.Results)
+
+			// 显示当前进度
+			gologger.Info().Msgf("当前已获取 %d 条结果，总结果数量: %d", totalResults, d.Size)
+
+			// 输出当前页的链接
+			for _, result := range d.Results {
+				if len(result) > 4 { // 确保索引安全
+					fmt.Println(result[4]) // 输出链接
+				}
+			}
+
+			// 将当前页的结果写入CSV文件
+			if err := AppendToCSV(d.Results, outputFile); err != nil {
+				gologger.Error().Msgf("写入数据失败: %v", err)
+				return fmt.Errorf("写入数据失败: %v", err)
+			}
+
+			// 如果没有next参数，说明已经没有更多结果
+			if d.Next == "" {
+				gologger.Info().Msgf("没有更多结果了")
+				break
+			}
+
+			// 连续翻页接口不使用 maxLimit 参数，获取所有可用结果
+
+			// 更新next参数，继续获取下一页
+			nextParam = d.Next
+
+			// 添加延时，避免请求过快
+			time.Sleep(1 * time.Second)
 		}
 
+	} else {
+		// 使用传统查询接口，不使用翻页
+		gologger.Info().Msgf("使用传统查询接口获取数据")
+
+		// 使用用户指定的数量
+		pageSize := maxLimit
+
 		// 构建请求URL
-		url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=%d&size=%d&fields=%s",
-			FofaAPIURL, conf.Fofa.Key, queryBase64, currentPage, pageSize, DefaultFields)
+		url := fmt.Sprintf("%s?key=%s&qbase64=%s&page=1&size=%d&fields=%s",
+			FofaAPIURL, conf.Fofa.Key, queryBase64, pageSize, DefaultFields)
 
 		// 发送请求
 		request := gorequest.New()
@@ -401,49 +468,28 @@ func FOF(s string, outputFile string, maxResults int) error {
 
 		// 如果没有结果，跳出循环
 		if len(d.Results) == 0 {
-			if currentPage == 1 {
-				gologger.Warning().Msgf("未找到结果: %s", s)
-				return fmt.Errorf("未找到结果: %s", s)
-			}
-			break
+			gologger.Warning().Msgf("未找到结果: %s", s)
+			return fmt.Errorf("未找到结果: %s", s)
 		}
 
-		// 添加当前页的结果到总结果中
-		allResults = append(allResults, d.Results...)
+		// 更新总结果数量
 		totalResults += len(d.Results)
 
-		// 显示当前进度
-		gologger.Info().Msgf("第 %d 页，当前已获取 %d 条结果", currentPage, totalResults)
+		// 显示当前进度和总数量
+		gologger.Info().Msgf("获取到 %d 条结果，查询总数量: %d", totalResults, d.Size)
 
-		// 输出当前页的链接
+		// 输出链接
 		for _, result := range d.Results {
 			if len(result) > 4 { // 确保索引安全
 				fmt.Println(result[4]) // 输出链接
 			}
 		}
 
-		// 将当前页的结果写入CSV文件
+		// 将结果写入CSV文件
 		if err := AppendToCSV(d.Results, outputFile); err != nil {
 			gologger.Error().Msgf("写入数据失败: %v", err)
 			return fmt.Errorf("写入数据失败: %v", err)
 		}
-
-		// 如果当前页的结果数量少于请求的数量，说明已经没有更多结果
-		if len(d.Results) < pageSize {
-			break
-		}
-
-		// 如果已经达到最大结果数量限制，跳出循环
-		if totalResults >= maxLimit {
-			gologger.Warning().Msgf("已达到最大结果数量限制 %d 条", maxLimit)
-			break
-		}
-
-		// 页码加1，继续获取下一页
-		currentPage++
-
-		// 添加延时，避免请求过快
-		time.Sleep(1 * time.Second)
 	}
 
 	// 显示总结果数量

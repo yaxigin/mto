@@ -21,6 +21,7 @@ type Tian struct {
 	YUfa       bool   // 只输出url
 	Months     int    // 查询月份范围
 	MaxResults int    // 最大结果数量
+	UseNext    bool   // 使用连续翻页接口
 }
 
 func ROO(Info *Tian) {
@@ -54,7 +55,8 @@ func ROO(Info *Tian) {
 	cmdFlags.BoolVar(&Info.YUfa, "k", false, "查询fofa语法")
 	cmdFlags.BoolVar(&Info.OnlyHost, "h", false, "显示帮助信息")
 	cmdFlags.IntVar(&Info.Months, "m", 0, "查询月份范围(0:不限制, 1:一个月, 2:两个月)")
-	cmdFlags.IntVar(&Info.MaxResults, "max", 0, "最大结果数量，默认为0（获取所有结果），最大支持获取10000条结果")
+	cmdFlags.IntVar(&Info.MaxResults, "d", 0, "最大结果数量，默认为1000，最大支持获取10000条结果（仅在传统查询时有效）")
+	cmdFlags.BoolVar(&Info.UseNext, "n", false, "使用连续翻页接口，避免数据错位问题")
 
 	// 解析命令后的参数
 	if len(os.Args) > 2 {
@@ -150,7 +152,8 @@ func showFofaHelp() {
 	gologger.Print().Msgf("  -u, --url              过滤输出url信息")
 	gologger.Print().Msgf("  -ip                    过滤输出ip信息")
 	gologger.Print().Msgf("  -k, --k                查询fofa语法")
-	gologger.Print().Msgf("  -max int               最大结果数量，默认为0（获取所有结果），最大支持获取10000条结果")
+	gologger.Print().Msgf("  -d int               最大结果数量，默认为1000，单次查询最大支持获取10000条结果")
+	gologger.Print().Msgf("  -n                使用连续翻页接口，避免数据错位问题，会自动获取所有可用结果，需要额外消耗F币（不受 -d 参数限制）")
 	gologger.Print().Msgf("  -h, --help             显示帮助信息")
 }
 
