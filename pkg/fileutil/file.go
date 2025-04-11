@@ -15,7 +15,7 @@ import (
 )
 
 // ProcessFofaFile 处理fofa批量查询文件
-func ProcessFofaFile(inputFile, outputFile string) error {
+func ProcessFofaFile(inputFile, outputFile string, maxResults ...int) error {
 	// 验证输入
 	if inputFile == "" {
 		return fmt.Errorf("输入文件路径不能为空")
@@ -65,7 +65,14 @@ func ProcessFofaFile(inputFile, outputFile string) error {
 		processed++
 		// 调用 fofa.FOF 处理每一行
 		gologger.Info().Msgf("[%d/%d] 处理查询: %s", processed, lineCount, query)
-		if err := fofa.FOF(query, outputFile); err != nil {
+
+		// 处理可变参数
+		maxLimit := 10000 // 默认值
+		if len(maxResults) > 0 && maxResults[0] > 0 {
+			maxLimit = maxResults[0]
+		}
+
+		if err := fofa.FOF(query, outputFile, maxLimit); err != nil {
 			gologger.Warning().Msgf("[%d/%d] 处理失败: %v", processed, lineCount, err)
 			failed++
 			continue // 继续处理下一行，而不是直接返回错误

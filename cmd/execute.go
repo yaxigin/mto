@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+
 	"github.com/yaxigin/mto/pkg/fileutil"
 	"github.com/yaxigin/mto/pkg/fofa"
 	"github.com/yaxigin/mto/pkg/hunter"
@@ -120,14 +121,14 @@ ICP备案:
 func executeFofaExtCommand(options *Tian) {
 
 	if options.Query != "" {
-		if err := fofa.FOCMD(options.Query, options.onlylink, options.OnlyIP); err != nil {
+		if err := fofa.FOCMD(options.Query, options.onlylink, options.OnlyIP, options.MaxResults); err != nil {
 			fmt.Println("执行查询失败:", err)
 		}
 	}
 
 	if options.Local != "" {
 		fmt.Println("读取文件:", options.Local)
-		if err := fileutil.ProcessFofaFile(options.Local, options.Output); err != nil {
+		if err := fileutil.ProcessFofaFile(options.Local, options.Output, options.MaxResults); err != nil {
 			fmt.Println("执行批量查询失败:", err)
 		}
 	}

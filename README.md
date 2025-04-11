@@ -39,6 +39,7 @@ mto.exe fofa [flags]
 - `-o, --output string`: 输出 `-f` 参数结果到 CSV 文件，默认输出到 `fofa.csv`。
 - `-u, --url`: 过滤输出 URL 信息。
 - `-ip`: 过滤输出 IP 信息。
+- `-max int`: 最大结果数量，默认为10000，支持翻页获取更多结果。
 - `-k, --k`: 查询 FOFA 语法。
 - `-h, --help`: 显示帮助信息。
 
@@ -47,8 +48,8 @@ mto.exe fofa [flags]
 1. **使用单个 FOFA 语法查询**：
 
    ```sh
-   mto.exe fofa -s "title=\"登录\""
-   mto.exe fofa -s 'title="登录"'  # 可以使用单引号
+   mto.exe fofa -s 'title="登录" && country="CN"' 
+   mto.exe fofa -s title="登录"
    ```
 
 2. **从本地文件读取 FOFA 语法**：
@@ -63,21 +64,27 @@ mto.exe fofa [flags]
    mto.exe fofa -f fofa_queries.txt -o custom_output.csv
    ```
 
-4. **过滤输出 URL 信息**：
+4. **过滤输出 URL 信息跟其他扫描工具配合使用**：
 
    ```sh
-   mto.exe fofa -s 'title="登录"' -u
+   mto.exe fofa -s title="登录" -u | nuclei.exe
    ```
 
 5. **过滤输出 IP 信息**：
 
    ```sh
-   mto.exe fofa -s "title=\"登录\"" -ip
+   mto.exe fofa -s title="登录" -ip
    ```
 
 6. **查询 FOFA 语法**：
 
    ```sh
    mto.exe fofa -k
+   ```
+
+7. **指定最大结果数量**：
+
+   ```sh
+   mto.exe fofa -s title="登录" -max 5000
    ```
 

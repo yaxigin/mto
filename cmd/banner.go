@@ -7,7 +7,7 @@ const banner = `
   /  |/  /_  __/ __ \ 
  / /|_/ / / / / / / / 
 / /  / / / / / /_/ /  
-/_/  /_/ /_/  \____/   v2.0
+/_/  /_/ /_/  \____/   v3.0
 `
 
 // ShowBanner is used to show the banner to the user

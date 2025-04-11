@@ -12,14 +12,15 @@ type Tian struct {
 	Command string
 
 	// 通用参数
-	Query    string // 查询语句
-	Local    string // 本地文件
-	Output   string // 输出文件
-	OnlyIP   bool   // 只输出ip
-	onlylink bool   // 输出link
-	OnlyHost bool   // 只输出host
-	YUfa     bool   // 只输出url
-	Months   int    // 查询月份范围
+	Query      string // 查询语句
+	Local      string // 本地文件
+	Output     string // 输出文件
+	OnlyIP     bool   // 只输出ip
+	onlylink   bool   // 输出link
+	OnlyHost   bool   // 只输出host
+	YUfa       bool   // 只输出url
+	Months     int    // 查询月份范围
+	MaxResults int    // 最大结果数量
 }
 
 func ROO(Info *Tian) {
@@ -53,6 +54,7 @@ func ROO(Info *Tian) {
 	cmdFlags.BoolVar(&Info.YUfa, "k", false, "查询fofa语法")
 	cmdFlags.BoolVar(&Info.OnlyHost, "h", false, "显示帮助信息")
 	cmdFlags.IntVar(&Info.Months, "m", 0, "查询月份范围(0:不限制, 1:一个月, 2:两个月)")
+	cmdFlags.IntVar(&Info.MaxResults, "max", 10000, "最大结果数量，默认为10000，最大支持获取10000条结果")
 
 	// 解析命令后的参数
 	if len(os.Args) > 2 {
@@ -148,6 +150,7 @@ func showFofaHelp() {
 	gologger.Print().Msgf("  -u, --url              过滤输出url信息")
 	gologger.Print().Msgf("  -ip                    过滤输出ip信息")
 	gologger.Print().Msgf("  -k, --k                查询fofa语法")
+	gologger.Print().Msgf("  -max int               最大结果数量，默认为10000，支持翻页获取更多结果")
 	gologger.Print().Msgf("  -h, --help             显示帮助信息")
 }
 
